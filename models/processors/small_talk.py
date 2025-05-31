@@ -79,7 +79,7 @@ def is_small_talk(question):
         "dở hơi", "thần kinh", "đầu óc", "mất dạy", "vô học", "chửi bới", "mất nết", 
         "láo", "láo toét", "bịa đặt", "xúc phạm", "nhục", "khinh", "khinh miệt", 
         "hãm", "đểu", "kẹt", "lol", "wtf", "fuck", "shit", "asshole", "dick", "pussy",
-        "bastard", "baka", "aho", "kuso", "chết", "giết", "đâm", "chém", "đánh", "hành hạ",
+        "bastard", "baka", "aho", "kuso", "chết", "giết", "đâm", "chém", "hành hạ",
         "tra tấn", "bạo lực", "tự tử", "tự sát"
     ]
     sensitive_topics = [
