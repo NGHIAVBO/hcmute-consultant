@@ -49,13 +49,6 @@ def is_small_talk(question):
         "mình sai", "tôi sai", "tôi xin lỗi", "lỗi của tôi", "lỗi của mình", "lỗi tại mình",
         "mình có lỗi", "tôi có lỗi", "lỗi nhé", "nhầm", "mình nhầm", "tôi nhầm"
     ]
-    opinion_questions = [
-        "nghĩ gì", "thích gì", "quan điểm", "ý kiến", "nhận xét", "đánh giá", "nhận định",
-        "cho rằng", "đồng ý", "không đồng ý", "bất đồng", "thế nào về", "sao về", "thấy sao",
-        "thấy thế nào", "ra sao", "nói gì", "bình luận gì", "comment", "review", "đánh giá",
-        "nghĩ về", "thích nhất", "ghét nhất", "tư tưởng", "lập trường", "mong muốn", "ước mơ",
-        "ước gì", "mơ ước", "mong ước", "khao khát", "ao ước", "nguyện vọng"
-    ]
     echo_statements = [
         "ok", "oke", "okay", "yes", "no", "không", "có", "ừ", "uh", "uhm", "à", "ạ", 
         "vâng", "dạ", "rồi", "oh", "được", "tốt", "hiểu", "hiểu rồi", "rõ", "đã rõ",
@@ -125,9 +118,6 @@ def is_small_talk(question):
     for word in echo_statements:
         if question_lower == word:
             return "Tôi đang ở đây và sẵn sàng trả lời câu hỏi của bạn về nội dung tài liệu. Bạn muốn biết điều gì?"
-    for word in opinion_questions:
-        if word in question_lower and len(words) < 10:
-            return "Tôi là một trợ lý AI và không có ý kiến cá nhân. Tôi chỉ có thể cung cấp thông tin dựa trên nội dung tài liệu đã được tải lên. Bạn có câu hỏi cụ thể về tài liệu không?"
     for word in capability_questions:
         if word in question_lower and len(words) < 10:
             return "Tôi có thể đọc và phân tích nội dung tài liệu PDF, sau đó trả lời các câu hỏi của bạn dựa trên thông tin tìm thấy. Tôi có thể trích dẫn nguồn, tìm kiếm từ khóa, và tóm tắt thông tin từ tài liệu. Bạn muốn hỏi điều gì về nội dung tài liệu?"
