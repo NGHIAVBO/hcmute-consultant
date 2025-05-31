@@ -88,25 +88,33 @@ def initialize_app():
 @app.route('/recommend', methods=['GET'])
 def recommend():
     try:
+        print("==> /recommend endpoint called")
         query = request.args.get('text', '').strip()
+        print(f"Query param: '{query}'")
         if not query:
+            print("Query is empty or missing")
             return jsonify({
                 'status': 'error',
                 'message': 'Tham số truy vấn "text" là bắt buộc và không được rỗng'
             }), 400
-            
+
         recommended_indices, similarity_scores = recommend_similar_questions(query, 5)
+        print(f"Recommended indices: {recommended_indices}")
+        print(f"Similarity scores: {similarity_scores}")
         if not recommended_indices or not similarity_scores:
+            print("No recommendations found")
             return jsonify({
                 'status': 'success',
                 'message': f'Không tìm thấy gợi ý phù hợp cho truy vấn "{query}"',
                 'data': []
             })
-            
+
         df = app.config['df']
+        print(f"DataFrame shape: {df.shape if df is not None else 'None'}")
         recommendations = []
-        
+
         for idx, score in zip(recommended_indices, similarity_scores):
+            print(f"Checking idx: {idx}, score: {score}")
             if idx < len(df) and score > 0.1:
                 result = {
                     'question': df.iloc[idx]['question'],
@@ -120,21 +128,24 @@ def recommend():
                 if 'answer_id' in df.columns and not pd.isna(df.iloc[idx].get('answer_id')):
                     result['answer_id'] = int(df.iloc[idx]['answer_id'])
                 recommendations.append(result)
-                
+
+        print(f"Total recommendations: {len(recommendations)}")
         if not recommendations:
+            print("No recommendations after filtering")
             return jsonify({
                 'status': 'success',
                 'message': f'Không tìm thấy gợi ý phù hợp cho truy vấn "{query}"',
                 'data': []
             })
-            
+
         return jsonify({
             'status': 'success',
             'message': f'Đã gợi ý {len(recommendations)} mục cho truy vấn "{query}"',
             'data': recommendations
         })
-        
+
     except Exception as e:
+        print(f"Exception in /recommend: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': f'Lỗi máy chủ nội bộ: {str(e)}'
