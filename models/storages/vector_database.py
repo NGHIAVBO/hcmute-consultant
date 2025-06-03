@@ -37,7 +37,7 @@ def get_vector_database(text_chunks):
 def load_vector_database():
     try:
         if not os.path.exists("faiss_index") or not os.path.exists("faiss_index/index.faiss"):
-            return None, "Không tìm thấy thông tin bạn đưa ra. Vui lòng đặt câu hỏi khác."
+            return None, "Không tìm thấy thông tin bạn đưa ra. Vui lòng đặt câu hỏi khác.2"
         
         embeddings = GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
         

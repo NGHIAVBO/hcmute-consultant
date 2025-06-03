@@ -60,7 +60,7 @@ def process_query(prompt):
             return "Xin lỗi, không nhận được câu trả lời. Vui lòng thử lại sau."
             
         if any(phrase in answer.lower() for phrase in ["không tìm thấy thông tin", "không có thông tin"]):
-            result = "Không tìm thấy thông tin bạn đưa ra. Vui lòng đặt câu hỏi khác."
+            result = "Không tìm thấy thông tin bạn đưa ra. Vui lòng đặt câu hỏi khác.1"
         else:
             result = answer
         
