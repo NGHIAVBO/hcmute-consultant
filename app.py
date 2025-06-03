@@ -4,22 +4,22 @@ import os
 import time
 import pandas as pd
 import google.generativeai as genai
-from config import GOOGLE_API_KEY, LOCAL_URL, PRODUCTION_URL
-
+from config import GOOGLE_API_KEY, LOCAL_URL, PRODUCTION_URL, JSON_FILE, CONVERT_FILE
 from models.managers.json import prepare_data
 from models.processors.similar_questions import recommend_similar_questions
 from models.processors.llm_chain import generate_alternative_answers
-
 from models.managers.pdf import process_directory_pdfs
 from models.processors.text_splitter import get_text_chunks
 from models.storages.vector_database import get_vector_database
 from models.processors.query_processor import process_query
-
 import sys
 import importlib.util
 import subprocess
+import logging
 
-from config import JSON_FILE, CONVERT_FILE
+# Configure logging for better debugging in production
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": [LOCAL_URL, PRODUCTION_URL, "*"]}})
@@ -27,62 +27,94 @@ CORS(app, resources={r"/*": {"origins": [LOCAL_URL, PRODUCTION_URL, "*"]}})
 genai.configure(api_key=GOOGLE_API_KEY)
 
 def check_and_create_output_json():
-    if not os.path.exists(JSON_FILE):
-        convert_file_path = os.path.join(os.path.dirname(__file__), CONVERT_FILE)
-        if os.path.exists(convert_file_path):
-            try:
-                spec = importlib.util.spec_from_file_location("convert", convert_file_path)
-                convert_module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(convert_module)
-                
-                if hasattr(convert_module, "export_mysql_data_to_json"):
-                    count = convert_module.export_mysql_data_to_json()
-                    return count > 0
-                else:
-                    result = subprocess.run(["python", convert_file_path], capture_output=True, text=True)
-                    if result.returncode == 0:
-                        if os.path.exists(JSON_FILE):
-                            return True
-                    else:
-                        print(f"Lỗi khi chạy convert.py: {result.stderr}")
-            except Exception as e:
-                print(f"Lỗi khi import hoặc thực thi convert.py: {str(e)}")
-        
-        return False
-    return True
-
-def initialize_app():
-    result = True
+    """
+    Check if output.json exists; if not, attempt to create it using convert.py.
+    Returns True if the file exists or is created successfully, False otherwise.
+    """
+    logger.info(f"Checking for JSON_FILE at: {JSON_FILE}")
+    if os.path.exists(JSON_FILE):
+        logger.info("output.json exists, skipping creation.")
+        return True
     
-    # json_created = check_and_create_output_json()
-    # if not json_created:
-    #     print("Không thể tạo output.json từ MySQL.")
+    logger.warning("output.json not found, attempting to create it.")
+    convert_file_path = os.path.join(os.path.dirname(__file__), CONVERT_FILE)
+    if not os.path.exists(convert_file_path):
+        logger.error(f"convert.py not found at: {convert_file_path}")
+        return False
     
     try:
-        df, vectorizer, tfidf_matrix = prepare_data()
-        app.config['df'] = df
-        app.config['vectorizer'] = vectorizer
-        app.config['tfidf_matrix'] = tfidf_matrix
+        spec = importlib.util.spec_from_file_location("convert", convert_file_path)
+        convert_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(convert_module)
+        
+        if hasattr(convert_module, "export_mysql_data_to_json"):
+            count = convert_module.export_mysql_data_to_json()
+            logger.info(f"Created output.json with {count} records.")
+            return count > 0
+        else:
+            logger.warning("convert.py does not have export_mysql_data_to_json function, running as script.")
+            result = subprocess.run(["python", convert_file_path], capture_output=True, text=True)
+            if result.returncode == 0 and os.path.exists(JSON_FILE):
+                logger.info("output.json created successfully via script.")
+                return True
+            else:
+                logger.error(f"Failed to run convert.py: {result.stderr}")
+                return False
     except Exception as e:
-        print(f"Lỗi khi chuẩn bị dữ liệu: {str(e)}")
+        logger.error(f"Error creating output.json: {str(e)}")
+        return False
+
+def initialize_app():
+    """
+    Initialize the Flask app by loading data and processing PDFs if necessary.
+    Returns True if initialization is successful, False otherwise.
+    """
+    result = True
+    logger.info("Starting app initialization.")
+
+    # Check if output.json exists; if not, try to create it
+    if not check_and_create_output_json():
+        logger.warning("output.json not found or could not be created, proceeding with empty DataFrame.")
         app.config['df'] = pd.DataFrame(columns=['question', 'answer'])
         app.config['vectorizer'] = None
         app.config['tfidf_matrix'] = None
         result = False
-    
+    else:
+        try:
+            logger.info("Loading data from output.json.")
+            df, vectorizer, tfidf_matrix = prepare_data()
+            app.config['df'] = df
+            app.config['vectorizer'] = vectorizer
+            app.config['tfidf_matrix'] = tfidf_matrix
+            logger.info("Data loaded successfully.")
+        except Exception as e:
+            logger.error(f"Error loading data from output.json: {str(e)}")
+            app.config['df'] = pd.DataFrame(columns=['question', 'answer'])
+            app.config['vectorizer'] = None
+            app.config['tfidf_matrix'] = None
+            result = False
+
+    # Process PDFs if FAISS index doesn't exist
     try:
         if not (os.path.exists("faiss_index") and os.path.exists("faiss_index/index.faiss")):
+            logger.info("FAISS index not found, processing PDFs.")
             success = process_directory_pdfs(
                 force_reprocess=False,
                 get_text_chunks_fn=get_text_chunks,
                 get_vector_database_fn=get_vector_database
             )
             if not success:
+                logger.error("Failed to process PDFs.")
                 result = False
+            else:
+                logger.info("PDFs processed successfully.")
+        else:
+            logger.info("FAISS index exists, skipping PDF processing.")
     except Exception as e:
-        print(f"Lỗi khi xử lý PDF: {str(e)}")
+        logger.error(f"Error processing PDFs: {str(e)}")
         result = False
-    
+
+    logger.info(f"App initialization completed with result: {result}")
     return result
 
 def ensure_recommend_data_loaded():
@@ -96,16 +128,20 @@ def ensure_recommend_data_loaded():
         or app.config.get('vectorizer') is None
         or app.config.get('tfidf_matrix') is None
     ):
+        logger.info("Recommendation data not loaded, attempting to load.")
         try:
             df, vectorizer, tfidf_matrix = prepare_data()
             app.config['df'] = df
             app.config['vectorizer'] = vectorizer
             app.config['tfidf_matrix'] = tfidf_matrix
+            logger.info("Recommendation data loaded successfully.")
         except Exception as e:
+            logger.error(f"Error loading recommendation data: {str(e)}")
             app.config['df'] = pd.DataFrame(columns=['question', 'answer'])
             app.config['vectorizer'] = None
             app.config['tfidf_matrix'] = None
 
+# Existing routes (/recommend, /recommend-answers, /chat) remain unchanged
 @app.route('/recommend', methods=['GET'])
 def recommend():
     try:
@@ -157,6 +193,7 @@ def recommend():
         })
         
     except Exception as e:
+        logger.error(f"Error in /recommend endpoint: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': f'Lỗi máy chủ nội bộ: {str(e)}'
@@ -187,6 +224,7 @@ def get_recommend_answers():
         })
         
     except Exception as e:
+        logger.error(f"Error in /recommend-answers endpoint: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': f'Lỗi máy chủ nội bộ: {str(e)}'
@@ -232,6 +270,7 @@ def chat():
         })
 
     except Exception as e:
+        logger.error(f"Error in /chat endpoint: {str(e)}")
         return jsonify({
             "status": "error",
             "message": f"Lỗi khi xử lý câu hỏi: {str(e)}",
@@ -239,5 +278,10 @@ def chat():
         }), 500
 
 if __name__ == "__main__":
-    initialize_app()
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    logger.info("Starting Flask application.")
+    if initialize_app():
+        logger.info("Application initialized successfully, starting server.")
+        app.run(host="0.0.0.0", port=5000, debug=False)
+    else:
+        logger.error("Application initialization failed, exiting.")
+        sys.exit(1)
