@@ -4,7 +4,8 @@ import os
 import time
 import pandas as pd
 import google.generativeai as genai
-from config import GOOGLE_API_KEY, LOCAL_URL, PRODUCTION_URL, JSON_FILE, CONVERT_FILE
+from config import GOOGLE_API_KEY, LOCAL_URL, PRODUCTION_URL
+
 from models.managers.json import prepare_data
 from models.processors.similar_questions import recommend_similar_questions
 from models.processors.llm_chain import generate_alternative_answers
@@ -12,132 +13,46 @@ from models.managers.pdf import process_directory_pdfs
 from models.processors.text_splitter import get_text_chunks
 from models.storages.vector_database import get_vector_database
 from models.processors.query_processor import process_query
-import sys
-import importlib.util
-import subprocess
-import logging
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": [LOCAL_URL, PRODUCTION_URL, "*"]}})
 
 genai.configure(api_key=GOOGLE_API_KEY)
 
-def check_and_create_output_json():
-    """
-    Check if output.json exists; if not, attempt to create it using convert.py if CONVERT_FILE is set.
-    """
-    logger.info(f"Checking for JSON_FILE at: {JSON_FILE}")
-    if os.path.exists(JSON_FILE):
-        logger.info("output.json exists, skipping creation.")
-        return True
-    
-    if not CONVERT_FILE:
-        logger.warning("CONVERT_FILE not set, cannot create output.json.")
-        return False
-
-    logger.warning("output.json not found, attempting to create it.")
-    convert_file_path = os.path.join(os.path.dirname(__file__), CONVERT_FILE)
-    if not os.path.exists(convert_file_path):
-        logger.error(f"convert.py not found at: {convert_file_path}")
-        return False
+def initialize_app():
+    result = True
     
     try:
-        spec = importlib.util.spec_from_file_location("convert", convert_file_path)
-        convert_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(convert_module)
-        
-        if hasattr(convert_module, "export_mysql_data_to_json"):
-            count = convert_module.export_mysql_data_to_json()
-            logger.info(f"Created output.json with {count} records.")
-            return count > 0
-        else:
-            logger.warning("convert.py does not have export_mysql_data_to_json function, running as script.")
-            result = subprocess.run(["python", convert_file_path], capture_output=True, text=True)
-            if result.returncode == 0 and os.path.exists(JSON_FILE):
-                logger.info("output.json created successfully via script.")
-                return True
-            else:
-                logger.error(f"Failed to run convert.py: {result.stderr}")
-                return False
+        df, vectorizer, tfidf_matrix = prepare_data()
+        app.config['df'] = df
+        app.config['vectorizer'] = vectorizer
+        app.config['tfidf_matrix'] = tfidf_matrix
     except Exception as e:
-        logger.error(f"Error creating output.json: {str(e)}")
-        return False
-
-def initialize_app():
-    """
-    Initialize the Flask app by loading data and processing PDFs if necessary.
-    """
-    result = True
-    logger.info("Starting app initialization.")
-
-    # Check if output.json exists
-    if not os.path.exists(JSON_FILE):
-        logger.warning(f"output.json not found at {JSON_FILE}, attempting to create it.")
-        if not check_and_create_output_json():
-            logger.error("Failed to create or find output.json, using empty DataFrame.")
-            app.config['df'] = pd.DataFrame(columns=['question', 'answer'])
-            app.config['vectorizer'] = None
-            app.config['tfidf_matrix'] = None
-            result = False
-        else:
-            try:
-                logger.info("Loading data from newly created output.json.")
-                df, vectorizer, tfidf_matrix = prepare_data()
-                app.config['df'] = df
-                app.config['vectorizer'] = vectorizer
-                app.config['tfidf_matrix'] = tfidf_matrix
-                logger.info("Data loaded successfully.")
-            except Exception as e:
-                logger.error(f"Error loading data from output.json: {str(e)}")
-                app.config['df'] = pd.DataFrame(columns=['question', 'answer'])
-                app.config['vectorizer'] = None
-                app.config['tfidf_matrix'] = None
-                result = False
-    else:
-        logger.info(f"output.json found at {JSON_FILE}, loading data.")
-        try:
-            df, vectorizer, tfidf_matrix = prepare_data()
-            app.config['df'] = df
-            app.config['vectorizer'] = vectorizer
-            app.config['tfidf_matrix'] = tfidf_matrix
-            logger.info("Data loaded successfully.")
-        except Exception as e:
-            logger.error(f"Error loading data from output.json: {str(e)}")
-            app.config['df'] = pd.DataFrame(columns=['question', 'answer'])
-            app.config['vectorizer'] = None
-            app.config['tfidf_matrix'] = None
-            result = False
-
-    # Process PDFs if FAISS index doesn't exist
+        print(f"Lỗi khi chuẩn bị dữ liệu: {str(e)}")
+        app.config['df'] = pd.DataFrame(columns=['question', 'answer'])
+        app.config['vectorizer'] = None
+        app.config['tfidf_matrix'] = None
+        result = False
+    
     try:
         if not (os.path.exists("faiss_index") and os.path.exists("faiss_index/index.faiss")):
-            logger.info("FAISS index not found, processing PDFs.")
             success = process_directory_pdfs(
                 force_reprocess=False,
                 get_text_chunks_fn=get_text_chunks,
                 get_vector_database_fn=get_vector_database
             )
             if not success:
-                logger.error("Failed to process PDFs.")
                 result = False
-            else:
-                logger.info("PDFs processed successfully.")
-        else:
-            logger.info("FAISS index exists, skipping PDF processing.")
     except Exception as e:
-        logger.error(f"Error processing PDFs: {str(e)}")
+        print(f"Lỗi khi xử lý PDF: {str(e)}")
         result = False
-
-    logger.info(f"App initialization completed with result: {result}")
+    
     return result
 
 def ensure_recommend_data_loaded():
     """
     Ensure df, vectorizer, and tfidf_matrix are loaded in app.config.
+    This is necessary for environments like Railway with multiple workers.
     """
     if (
         'df' not in app.config
@@ -145,15 +60,12 @@ def ensure_recommend_data_loaded():
         or app.config.get('vectorizer') is None
         or app.config.get('tfidf_matrix') is None
     ):
-        logger.info("Recommendation data not loaded, attempting to load.")
         try:
             df, vectorizer, tfidf_matrix = prepare_data()
             app.config['df'] = df
             app.config['vectorizer'] = vectorizer
             app.config['tfidf_matrix'] = tfidf_matrix
-            logger.info("Recommendation data loaded successfully.")
         except Exception as e:
-            logger.error(f"Error loading recommendation data: {str(e)}")
             app.config['df'] = pd.DataFrame(columns=['question', 'answer'])
             app.config['vectorizer'] = None
             app.config['tfidf_matrix'] = None
@@ -209,7 +121,6 @@ def recommend():
         })
         
     except Exception as e:
-        logger.error(f"Error in /recommend endpoint: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': f'Lỗi máy chủ nội bộ: {str(e)}'
@@ -240,7 +151,6 @@ def get_recommend_answers():
         })
         
     except Exception as e:
-        logger.error(f"Error in /recommend-answers endpoint: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': f'Lỗi máy chủ nội bộ: {str(e)}'
@@ -286,7 +196,6 @@ def chat():
         })
 
     except Exception as e:
-        logger.error(f"Error in /chat endpoint: {str(e)}")
         return jsonify({
             "status": "error",
             "message": f"Lỗi khi xử lý câu hỏi: {str(e)}",
@@ -294,10 +203,5 @@ def chat():
         }), 500
 
 if __name__ == "__main__":
-    logger.info("Starting Flask application.")
-    if initialize_app():
-        logger.info("Application initialized successfully, starting server.")
-        app.run(host="0.0.0.0", port=5000, debug=False)
-    else:
-        logger.error("Application initialization failed, exiting.")
-        sys.exit(1)
+    initialize_app()
+    app.run(host="0.0.0.0", port=5000, debug=False)
