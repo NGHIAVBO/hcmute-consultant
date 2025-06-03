@@ -67,51 +67,59 @@ def process_query(prompt):
         return small_talk_response
     
     try:
-        # Check JSON match first
+        # Load vector database
+        vector_database = load_vector_db_once()
+        result = None
+        
+        # Try PDF processing first
+        if vector_database and os.path.exists(PDF_FILE):
+            logger.info(f"Processing query with PDF: {PDF_FILE}")
+            context_prompt = f"Dựa trên thông tin trong {PDF_FILE}, {prompt}"
+            logger.info(f"Constructed context prompt: {context_prompt}")
+
+            # Get response from Gemini
+            response = get_gemini_response(vector_database, context_prompt, filter_pdf=PDF_FILE)
+            if response and "output_text" in response:
+                answer = response["output_text"]
+                logger.info(f"Received response from Gemini: {answer[:100]}...")
+                
+                if answer and not any(phrase in answer.lower() for phrase in ["không tìm thấy thông tin", "không có thông tin"]):
+                    result = answer
+                    set_cache(prompt, result, 0)
+                    print_reference_sources(response, None)
+            else:
+                logger.error("No response or output_text from get_gemini_response.")
+        
+        else:
+            if not vector_database:
+                logger.error("Vector database not loaded.")
+            if not os.path.exists(PDF_FILE):
+                logger.error(f"PDF file not found at: {PDF_FILE}")
+
+        # Fall back to JSON if PDF processing failed or returned no information
+        if result is None and os.path.exists(JSON_FILE):
+            logger.info(f"Falling back to JSON match in {JSON_FILE}")
+            json_match = find_best_match(prompt)
+            if json_match:
+                logger.info(f"Found JSON match for query: {prompt}")
+                result = json_match["answer"]
+                set_cache(prompt, result, 0)
+                print_reference_sources(None, json_match)
+        
+        # Return result or error
+        if result:
+            return result
+        return "Không tìm thấy thông tin bạn đưa ra. Vui lòng đặt câu hỏi khác."
+        
+    except Exception as e:
+        logger.error(f"Error processing query '{prompt}': {str(e)}")
+        # Try JSON fallback in case of exception
         if os.path.exists(JSON_FILE):
-            logger.info(f"Checking for JSON match in {JSON_FILE}")
+            logger.info(f"Falling back to JSON match in {JSON_FILE} after error")
             json_match = find_best_match(prompt)
             if json_match:
                 logger.info(f"Found JSON match for query: {prompt}")
                 set_cache(prompt, json_match["answer"], 0)
                 print_reference_sources(None, json_match)
                 return json_match["answer"]
-        else:
-            logger.warning(f"JSON file not found at: {JSON_FILE}")
-
-        # Load vector database
-        vector_database = load_vector_db_once()
-        if not vector_database:
-            logger.error("Vector database not loaded, cannot process query.")
-            return "Xin lỗi, không thể xử lý yêu cầu do lỗi cơ sở dữ liệu vector. Vui lòng thử lại sau."
-
-        # Verify PDF file exists
-        if not os.path.exists(PDF_FILE):
-            logger.error(f"PDF file not found at: {PDF_FILE}")
-            return "Xin lỗi, không thể tìm thấy file PDF tham chiếu. Vui lòng thử lại sau."
-
-        # Construct context prompt
-        context_prompt = f"Dựa trên thông tin trong {PDF_FILE}, {prompt}"
-        logger.info(f"Constructed context prompt: {context_prompt}")
-
-        # Get response from Gemini
-        response = get_gemini_response(vector_database, context_prompt, filter_pdf=PDF_FILE)
-        if not response or "output_text" not in response:
-            logger.error("No response or output_text from get_gemini_response.")
-            return "Xin lỗi, không nhận được câu trả lời từ hệ thống. Vui lòng thử lại sau."
-        
-        answer = response["output_text"]
-        logger.info(f"Received response from Gemini: {answer[:100]}...")  # Log first 100 chars
-        
-        # Handle cases where Gemini response indicates no information
-        if not answer or any(phrase in answer.lower() for phrase in ["không tìm thấy thông tin", "không có thông tin"]):
-            logger.warning(f"Gemini response indicates no information found: {answer}")
-            return "Không tìm thấy thông tin bạn đưa ra. Vui lòng đặt câu hỏi khác."
-        
-        set_cache(prompt, answer, 0)
-        print_reference_sources(response, None)
-        return answer
-        
-    except Exception as e:
-        logger.error(f"Error processing query '{prompt}': {str(e)}")
         return "Xin lỗi, tôi không thể xử lý yêu cầu của bạn. Vui lòng thử lại sau."

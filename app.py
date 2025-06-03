@@ -17,7 +17,7 @@ import importlib.util
 import subprocess
 import logging
 
-# Configure logging for better debugging in production
+# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -28,14 +28,17 @@ genai.configure(api_key=GOOGLE_API_KEY)
 
 def check_and_create_output_json():
     """
-    Check if output.json exists; if not, attempt to create it using convert.py.
-    Returns True if the file exists or is created successfully, False otherwise.
+    Check if output.json exists; if not, attempt to create it using convert.py if CONVERT_FILE is set.
     """
     logger.info(f"Checking for JSON_FILE at: {JSON_FILE}")
     if os.path.exists(JSON_FILE):
         logger.info("output.json exists, skipping creation.")
         return True
     
+    if not CONVERT_FILE:
+        logger.warning("CONVERT_FILE not set, cannot create output.json.")
+        return False
+
     logger.warning("output.json not found, attempting to create it.")
     convert_file_path = os.path.join(os.path.dirname(__file__), CONVERT_FILE)
     if not os.path.exists(convert_file_path):
@@ -67,21 +70,36 @@ def check_and_create_output_json():
 def initialize_app():
     """
     Initialize the Flask app by loading data and processing PDFs if necessary.
-    Returns True if initialization is successful, False otherwise.
     """
     result = True
     logger.info("Starting app initialization.")
 
-    # Check if output.json exists; if not, try to create it
-    if not check_and_create_output_json():
-        logger.warning("output.json not found or could not be created, proceeding with empty DataFrame.")
-        app.config['df'] = pd.DataFrame(columns=['question', 'answer'])
-        app.config['vectorizer'] = None
-        app.config['tfidf_matrix'] = None
-        result = False
+    # Check if output.json exists
+    if not os.path.exists(JSON_FILE):
+        logger.warning(f"output.json not found at {JSON_FILE}, attempting to create it.")
+        if not check_and_create_output_json():
+            logger.error("Failed to create or find output.json, using empty DataFrame.")
+            app.config['df'] = pd.DataFrame(columns=['question', 'answer'])
+            app.config['vectorizer'] = None
+            app.config['tfidf_matrix'] = None
+            result = False
+        else:
+            try:
+                logger.info("Loading data from newly created output.json.")
+                df, vectorizer, tfidf_matrix = prepare_data()
+                app.config['df'] = df
+                app.config['vectorizer'] = vectorizer
+                app.config['tfidf_matrix'] = tfidf_matrix
+                logger.info("Data loaded successfully.")
+            except Exception as e:
+                logger.error(f"Error loading data from output.json: {str(e)}")
+                app.config['df'] = pd.DataFrame(columns=['question', 'answer'])
+                app.config['vectorizer'] = None
+                app.config['tfidf_matrix'] = None
+                result = False
     else:
+        logger.info(f"output.json found at {JSON_FILE}, loading data.")
         try:
-            logger.info("Loading data from output.json.")
             df, vectorizer, tfidf_matrix = prepare_data()
             app.config['df'] = df
             app.config['vectorizer'] = vectorizer
@@ -120,7 +138,6 @@ def initialize_app():
 def ensure_recommend_data_loaded():
     """
     Ensure df, vectorizer, and tfidf_matrix are loaded in app.config.
-    This is necessary for environments like Railway with multiple workers.
     """
     if (
         'df' not in app.config
@@ -141,7 +158,6 @@ def ensure_recommend_data_loaded():
             app.config['vectorizer'] = None
             app.config['tfidf_matrix'] = None
 
-# Existing routes (/recommend, /recommend-answers, /chat) remain unchanged
 @app.route('/recommend', methods=['GET'])
 def recommend():
     try:
