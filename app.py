@@ -54,9 +54,9 @@ def check_and_create_output_json():
 def initialize_app():
     result = True
     
-    json_created = check_and_create_output_json()
-    if not json_created:
-        print("Không thể tạo output.json từ MySQL.")
+    # json_created = check_and_create_output_json()
+    # if not json_created:
+    #     print("Không thể tạo output.json từ MySQL.")
     
     try:
         df, vectorizer, tfidf_matrix = prepare_data()
@@ -240,4 +240,4 @@ def chat():
 
 if __name__ == "__main__":
     initialize_app()
-    app.run(host="0.0.0.0", port=8080, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=False)
